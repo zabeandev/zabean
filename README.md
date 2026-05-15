@@ -18,13 +18,47 @@ The `could_not_determine` field on every artifact is explicit: if a field defaul
 
 ---
 
-## How to run
+## Install the hook — sixty seconds to automated ground truth
+
+Run this once inside any Git repository:
 
 ```bash
 pip install -r requirements.txt
+python -m zabean.install
+```
 
+That's it. From that point forward, every `git commit` automatically updates
+the ground truth for changed files. The hook fires after the commit completes —
+it never blocks or delays the commit.
+
+```
+[zabean] post-commit hook fired — a3f9c2b
+[zabean] 2 source file(s) changed
+[zabean] collecting ground truth for lib/router.js, lib/middleware.js
+[zabean] done — 2 artifact(s) updated (0.1s)
+```
+
+To collect ground truth for the entire repository immediately (without waiting
+for a commit):
+
+```bash
+python -m zabean.agent.hook --full
+```
+
+To uninstall:
+
+```bash
+python -m zabean.uninstall
+```
+
+---
+
+## Manual collection via GitHub API
+
+For repositories you don't have locally, or for one-off collection runs:
+
+```bash
 export GITHUB_TOKEN=your_token
-
 python -m zabean.ground_truth.collector owner repo
 ```
 
@@ -34,12 +68,6 @@ Options:
 --branch BRANCH       Branch to collect from (default: main)
 --output-dir DIR      Output directory (default: output)
 --max-files N         Limit collection to N files (useful for testing)
-```
-
-Example:
-
-```bash
-python -m zabean.ground_truth.collector expressjs express --branch master
 ```
 
 ---
