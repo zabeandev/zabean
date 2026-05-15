@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "zabean"
+version = "0.1.0"
+description = "Knowledge infrastructure for software engineering organizations"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["requests>=2.31.0"]
+
+[project.scripts]
+zabean-install   = "zabean.agent.installer:install"
+zabean-uninstall = "zabean.agent.installer:uninstall"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["zabean*"]
