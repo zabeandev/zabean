@@ -1,6 +1,6 @@
 # Zabean
 
-Zabean is a knowledge infrastructure layer for software engineering organizations. It instruments a codebase and produces structured, versioned, portable knowledge artifacts — ground truth packages that live independently of any existing tool and serve both human and machine consumers. The core principle is a clean separation between what can be known deterministically and what requires interpretation. Zabean builds the former first, completely, and honestly.
+Zabean is a dev tool for knowledge infrastructure. It creates a persistent knowledge layer for developers and coding agents alike to better understand a codebase. Inspired by the Datadog Agent model, a single install command drops a lightweight agent into any repository. The agent fires on every Git commit, capturing deterministic ground truth about what changed and why. Each knowledge artifact is structured, versioned, and locally saved. The result is a living knowledge layer that humans can read, AI agents can consume, and the whole team can trust.
 
 ---
 
