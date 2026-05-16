@@ -30,14 +30,14 @@ ENV/
 htmlcov/
 .tox/
 
-# IDEs
+# Local development tool configs
+.claude/
 .vscode/
 .idea/
+.cursor/
+.DS_Store
 *.swp
 *.swo
-
-# macOS
-.DS_Store
 
 # Collected output — local runs are not committed
 output/*/
