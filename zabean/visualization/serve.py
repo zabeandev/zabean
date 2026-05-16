@@ -29,39 +29,54 @@ PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 7842
 # Ground truth loading
 # ---------------------------------------------------------------------------
 
-def _latest_run_dir() -> Path | None:
-    """Return the most-recently-modified output subdirectory that has a repo.json."""
+def _all_run_dirs() -> list[Path]:
+    """
+    Return every output subdirectory that contains a repo.json, sorted
+    newest-first by modification time.
+    """
     if not OUTPUT_DIR.exists():
-        return None
+        return []
     candidates = [
         p for p in OUTPUT_DIR.iterdir()
         if p.is_dir() and (p / "repo.json").exists()
     ]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda p: p.stat().st_mtime)
+    return sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)
 
 
 def _build_payload() -> dict | None:
-    """Load the latest run and return a JSON-serialisable payload."""
-    run_dir = _latest_run_dir()
-    if run_dir is None:
+    """
+    Merge all output run directories into a single payload.
+
+    repo.json and manifest metadata come from the most recent run.
+    The file list is built by walking every run directory newest-first and
+    keeping the first artifact seen for each unique file_path — so the latest
+    collected version of each file always wins, and files that were not touched
+    in the most recent incremental run are still included from earlier runs.
+    """
+    run_dirs = _all_run_dirs()
+    if not run_dirs:
         return None
 
-    repo = json.loads((run_dir / "repo.json").read_text())
+    # repo.json from the most recent run provides branch / SHA / timestamp.
+    latest = run_dirs[0]
+    repo = json.loads((latest / "repo.json").read_text())
 
-    files = []
-    files_dir = run_dir / "files"
-    if files_dir.exists():
-        for fpath in sorted(files_dir.glob("*.json")):
+    # Walk newest-first; first occurrence of each file_path wins.
+    seen: dict[str, dict] = {}
+    for run_dir in run_dirs:
+        files_dir = run_dir / "files"
+        if not files_dir.exists():
+            continue
+        for fpath in files_dir.glob("*.json"):
             fgt = json.loads(fpath.read_text())
-            # Strip raw_content — not needed in the UI; keeps the payload small.
-            fgt.pop("raw_content", None)
-            files.append(fgt)
+            fgt.pop("raw_content", None)   # not needed in UI; keeps payload small
+            file_path = fgt.get("file_path")
+            if file_path and file_path not in seen:
+                seen[file_path] = fgt
 
     return {
         "repo":         repo,
-        "files":        files,
+        "files":        sorted(seen.values(), key=lambda f: f.get("file_path", "")),
         # RepoGroundTruth serialises to "fetched_at", not "collected_at"
         "collected_at": repo.get("fetched_at") or repo.get("collected_at"),
         "commit_sha":   repo.get("commit_sha"),
