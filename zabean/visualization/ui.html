@@ -33,7 +33,19 @@
 
       --font-mono: 'SF Mono', 'Monaco', 'Cascadia Code', 'Fira Code', monospace;
       --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+      /* Font scale — multiplied by --font-scale to produce scaled sizes */
+      --font-scale: 1;
+      --fs-xs:   10px;
+      --fs-sm:   11px;
+      --fs-base: 13px;
+      --fs-md:   14px;
     }
+
+    /* Font size preference — set via data-font-size attribute on <html> */
+    html[data-font-size="small"]   { --font-scale: 0.875; }
+    html[data-font-size="default"] { --font-scale: 1; }
+    html[data-font-size="large"]   { --font-scale: 1.15; }
 
     /* =========================================================================
        Reset and base
@@ -53,7 +65,7 @@
       background: var(--color-navy-darkest);
       color: var(--color-white-dim);
       font-family: var(--font-sans);
-      font-size: 13px;
+      font-size: calc(var(--fs-base) * var(--font-scale));
       line-height: 1.5;
       -webkit-font-smoothing: antialiased;
     }
@@ -90,18 +102,19 @@
        Title bar
        ========================================================================= */
     #title-bar {
-      height: 40px;
+      min-height: 40px;
       flex-shrink: 0;
       background: var(--color-black);
       border-bottom: 1px solid rgba(255, 255, 255, 0.04);
       display: flex;
       align-items: center;
+      justify-content: space-between;
       padding: 0 16px;
     }
 
     .wordmark {
       font-family: var(--font-mono);
-      font-size: 14px;
+      font-size: calc(var(--fs-md) * var(--font-scale));
       font-weight: 500;
       color: var(--color-maize);
       letter-spacing: 0.02em;
@@ -130,7 +143,7 @@
     }
 
     .panel-header {
-      height: 32px;
+      min-height: 32px;
       flex-shrink: 0;
       display: flex;
       align-items: center;
@@ -141,7 +154,7 @@
 
     .panel-title {
       font-family: var(--font-sans);
-      font-size: 10px;
+      font-size: calc(var(--fs-xs) * var(--font-scale));
       font-variant: small-caps;
       letter-spacing: 0.08em;
       color: var(--color-gray-light);
@@ -201,16 +214,15 @@
 
     /* Search input */
     .search-input {
-      height: 22px;
+      min-height: 22px;
       background: var(--color-navy-mid);
       border: 1px solid var(--color-navy-light);
       border-radius: 3px;
       color: var(--color-gray-light);
       font-family: var(--font-mono);
-      font-size: 11px;
+      font-size: calc(var(--fs-sm) * var(--font-scale));
       padding: 0 8px;
       width: 148px;
-      outline: none;
       transition: border-color 0.1s;
     }
 
@@ -296,12 +308,12 @@
     }
 
     .view-btn {
-      height: 24px;
+      min-height: 24px;
       background: var(--color-navy-dark);
-      color: var(--color-gray-mid);
+      color: var(--color-gray-light);
       border: 1px solid var(--color-navy-light);
       font-family: var(--font-mono);
-      font-size: 10px;
+      font-size: calc(var(--fs-xs) * var(--font-scale));
       font-variant: small-caps;
       letter-spacing: 0.04em;
       padding: 4px 6px;
@@ -347,9 +359,9 @@
        ========================================================================= */
     .empty-state {
       font-family: var(--font-sans);
-      font-size: 12px;
+      font-size: calc(12px * var(--font-scale));
       font-style: italic;
-      color: var(--color-gray-mid);
+      color: var(--color-gray-light);
       text-align: center;
       user-select: none;
       pointer-events: none;
@@ -385,33 +397,33 @@
     }
 
     .status-item {
-      font-size: 11px;
+      font-size: calc(var(--fs-sm) * var(--font-scale));
       white-space: nowrap;
     }
 
     .status-repo {
       font-family: var(--font-mono);
-      font-size: 11px;
+      font-size: calc(var(--fs-sm) * var(--font-scale));
       color: var(--color-maize);
       font-weight: 500;
     }
 
     .status-branch {
       font-family: var(--font-mono);
-      font-size: 11px;
+      font-size: calc(var(--fs-sm) * var(--font-scale));
       color: var(--color-white-dim);
     }
 
     .status-sha {
       font-family: var(--font-mono);
-      font-size: 11px;
-      color: var(--color-gray-mid);
+      font-size: calc(var(--fs-sm) * var(--font-scale));
+      color: var(--color-gray-light);
     }
 
     .status-collected {
       font-family: var(--font-sans);
-      font-size: 11px;
-      color: var(--color-gray-mid);
+      font-size: calc(var(--fs-sm) * var(--font-scale));
+      color: var(--color-gray-light);
     }
 
     /* Hook status */
@@ -437,21 +449,21 @@
 
     .hook-label {
       font-family: var(--font-sans);
-      font-size: 11px;
+      font-size: calc(var(--fs-sm) * var(--font-scale));
     }
 
     .hook-label.active   { color: var(--color-green-bright); }
-    .hook-label.inactive { color: var(--color-gray-mid); }
+    .hook-label.inactive { color: var(--color-gray-light); }
 
     /* Collect now button */
     .collect-btn {
-      height: 20px;
+      min-height: 20px;
       background: var(--color-navy-dark);
       color: var(--color-maize);
       border: 1px solid var(--color-maize-dim);
       border-radius: 3px;
       font-family: var(--font-mono);
-      font-size: 10px;
+      font-size: calc(var(--fs-xs) * var(--font-scale));
       padding: 0 8px;
       cursor: pointer;
       white-space: nowrap;
@@ -496,8 +508,8 @@
     }
 
     .group-chevron {
-      font-size: 9px;
-      color: var(--color-gray-dark);
+      font-size: calc(9px * var(--font-scale));
+      color: var(--color-gray-mid);
       flex-shrink: 0;
       width: 10px;
       text-align: center;
@@ -505,8 +517,8 @@
 
     .group-label {
       font-family: var(--font-mono);
-      font-size: 10px;
-      color: var(--color-gray-mid);
+      font-size: calc(var(--fs-xs) * var(--font-scale));
+      color: var(--color-gray-light);
       letter-spacing: 0.03em;
       border-left: 2px dashed var(--color-gray-dark);
       padding-left: 6px;
@@ -555,7 +567,7 @@
 
     .file-name {
       font-family: var(--font-mono);
-      font-size: 11px;
+      font-size: calc(var(--fs-sm) * var(--font-scale));
       color: var(--color-white-dim);
       white-space: nowrap;
       overflow: hidden;
@@ -568,8 +580,8 @@
 
     .file-signal {
       font-family: var(--font-mono);
-      font-size: 10px;
-      color: var(--color-gray-dark);
+      font-size: calc(var(--fs-xs) * var(--font-scale));
+      color: var(--color-gray-light);
       white-space: nowrap;
       flex-shrink: 0;
     }
@@ -590,7 +602,7 @@
 
     .detail-file-name {
       font-family: var(--font-mono);
-      font-size: 13px;
+      font-size: calc(var(--fs-base) * var(--font-scale));
       font-weight: 500;
       color: var(--color-maize);
       margin-bottom: 4px;
@@ -598,9 +610,134 @@
 
     .detail-file-path {
       font-family: var(--font-mono);
-      font-size: 11px;
-      color: var(--color-gray-mid);
+      font-size: calc(var(--fs-sm) * var(--font-scale));
+      color: var(--color-gray-light);
       word-break: break-all;
+    }
+
+    /* =========================================================================
+       Font size controls (title bar)
+       ========================================================================= */
+    .font-size-controls {
+      display: flex;
+    }
+
+    .font-size-btn {
+      min-height: 22px;
+      background: var(--color-navy-dark);
+      color: var(--color-gray-light);
+      border: 1px solid var(--color-navy-light);
+      font-family: var(--font-mono);
+      font-size: calc(var(--fs-xs) * var(--font-scale));
+      padding: 0 6px;
+      cursor: pointer;
+      user-select: none;
+      line-height: 1;
+      transition: background 0.1s, color 0.1s;
+    }
+
+    .font-size-btn:first-child { border-radius: 3px 0 0 3px; }
+    .font-size-btn:last-child  { border-radius: 0 3px 3px 0; }
+    .font-size-btn + .font-size-btn { border-left: none; }
+
+    .font-size-btn.active {
+      background: var(--color-navy-mid);
+      color: var(--color-white-dim);
+      border-color: var(--color-gray-dark);
+    }
+
+    .font-size-btn:hover:not(.active) {
+      background: var(--color-navy-mid);
+      color: var(--color-white);
+    }
+
+    /* =========================================================================
+       Structural files toggle (top panel header)
+       ========================================================================= */
+    .structural-btn {
+      min-height: 24px;
+      background: var(--color-navy-dark);
+      color: var(--color-gray-light);
+      border: 1px solid var(--color-navy-light);
+      font-family: var(--font-mono);
+      font-size: calc(var(--fs-xs) * var(--font-scale));
+      font-variant: small-caps;
+      letter-spacing: 0.04em;
+      padding: 4px 8px;
+      border-radius: 3px;
+      cursor: pointer;
+      white-space: nowrap;
+      user-select: none;
+      line-height: 1;
+      transition: background 0.1s, color 0.1s, border-color 0.1s;
+    }
+
+    .structural-btn:hover:not(.active) {
+      background: var(--color-navy-mid);
+      color: var(--color-white-dim);
+    }
+
+    /* Active = structural files are hidden — subtle maize tint, not solid fill */
+    .structural-btn.active {
+      background: var(--color-maize-dark);
+      color: var(--color-maize);
+      border-color: var(--color-maize-dim);
+    }
+
+    /* =========================================================================
+       File controls row (files panel header)
+       ========================================================================= */
+    .file-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .collapse-btn {
+      background: none;
+      border: none;
+      color: var(--color-gray-light);
+      font-family: var(--font-mono);
+      font-size: calc(var(--fs-xs) * var(--font-scale));
+      cursor: pointer;
+      padding: 0;
+      white-space: nowrap;
+      transition: color 0.1s;
+    }
+
+    .collapse-btn:hover {
+      color: var(--color-maize);
+    }
+
+    /* =========================================================================
+       Keyboard shortcut hint (files panel footer)
+       ========================================================================= */
+    #shortcut-hint {
+      flex-shrink: 0;
+      padding: 4px 10px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--color-gray-dark);
+      border-top: 1px solid var(--color-navy-light);
+      user-select: none;
+    }
+
+    /* =========================================================================
+       Focus indicators
+       ========================================================================= */
+    :focus-visible {
+      outline: 2px solid var(--color-maize);
+      outline-offset: 2px;
+    }
+
+    /* =========================================================================
+       Reduced motion
+       ========================================================================= */
+    @media (prefers-reduced-motion: reduce) {
+      * {
+        transition: none !important;
+        animation: none !important;
+      }
     }
 
   </style>
@@ -614,6 +751,11 @@
        ========================================================================= -->
   <div id="title-bar">
     <span class="wordmark">zabean</span>
+    <div class="font-size-controls" aria-label="Text size">
+      <button class="font-size-btn" data-size="small"   aria-label="Small text">A−</button>
+      <button class="font-size-btn active" data-size="default" aria-label="Default text">A</button>
+      <button class="font-size-btn" data-size="large"   aria-label="Large text">A+</button>
+    </div>
   </div>
 
   <!-- =========================================================================
@@ -622,10 +764,11 @@
   <div id="workspace">
 
     <!-- Top panel -->
-    <div id="top-panel" class="panel">
+    <div id="top-panel" class="panel" role="region" aria-label="Dependency graph">
       <div class="panel-header">
         <span class="panel-title">dependency graph</span>
-        <div class="view-mode-selector" role="group" aria-label="View mode">
+        <button id="structural-toggle" class="structural-btn" aria-pressed="false">hide structural</button>
+        <div class="view-mode-selector" role="toolbar" aria-label="View mode">
           <button class="view-btn active" data-mode="dependency">dependency</button>
           <button class="view-btn"        data-mode="contributors">contributors</button>
           <button class="view-btn"        data-mode="health">health</button>
@@ -644,27 +787,31 @@
     <div id="bottom-area">
 
       <!-- Bottom left: file list -->
-      <div id="bottom-left" class="panel">
+      <div id="bottom-left" class="panel" role="region" aria-label="File list">
         <div class="panel-header">
           <span class="panel-title">files</span>
-          <input
-            id="search-input"
-            class="search-input"
-            type="text"
-            placeholder="filter files…"
-            aria-label="Filter files"
-          >
+          <div class="file-controls">
+            <button id="collapse-toggle" class="collapse-btn">collapse all</button>
+            <input
+              id="search-input"
+              class="search-input"
+              type="text"
+              placeholder="filter files…"
+              aria-label="Filter files"
+            >
+          </div>
         </div>
         <div class="panel-body">
-          <div id="file-list-scroll"></div>
+          <div id="file-list-scroll" role="list"></div>
         </div>
+        <div id="shortcut-hint">/ search · s structural · c collapse · e expand</div>
       </div>
 
       <!-- Vertical resize bar -->
       <div id="v-resize" class="resize-bar resize-v" title="drag to resize · double-click to reset"></div>
 
       <!-- Bottom right: detail -->
-      <div id="bottom-right" class="panel">
+      <div id="bottom-right" class="panel" role="region" aria-label="File detail">
         <div class="panel-header">
           <span class="panel-title">detail</span>
         </div>
@@ -822,21 +969,42 @@
   // ===========================================================================
 
   const state = {
-    data:         null,   // API response: { repo, files, collected_at, commit_sha }
-    selectedPath: null,
-    mode:         'dependency',
-    query:        '',
-    collapsed:    new Set(),
+    data:           null,   // API response: { repo, files, collected_at, commit_sha }
+    selectedPath:   null,
+    mode:           'dependency',
+    query:          '',
+    collapsed:      new Set(),
+    showStructural: true,
   };
 
   // DOM refs
-  const fileListScroll  = document.getElementById('file-list-scroll');
-  const searchInput     = document.getElementById('search-input');
-  const bottomRightBody = document.getElementById('bottom-right-body');
-  const statusRepo      = document.querySelector('.status-repo');
-  const statusBranch    = document.querySelector('.status-branch');
-  const statusSha       = document.querySelector('.status-sha');
-  const statusCollected = document.querySelector('.status-collected');
+  const fileListScroll    = document.getElementById('file-list-scroll');
+  const searchInput       = document.getElementById('search-input');
+  const bottomRightBody   = document.getElementById('bottom-right-body');
+  const statusRepo        = document.querySelector('.status-repo');
+  const statusBranch      = document.querySelector('.status-branch');
+  const statusSha         = document.querySelector('.status-sha');
+  const statusCollected   = document.querySelector('.status-collected');
+  const structuralToggle  = document.getElementById('structural-toggle');
+  const collapseToggleBtn = document.getElementById('collapse-toggle');
+  const fontSizeBtns      = document.querySelectorAll('.font-size-btn');
+
+  // ---------------------------------------------------------------------------
+  // Font size — persist in localStorage, apply on load
+  // ---------------------------------------------------------------------------
+
+  function setFontSize(size) {
+    document.documentElement.setAttribute('data-font-size', size);
+    fontSizeBtns.forEach(b => b.classList.toggle('active', b.dataset.size === size));
+    localStorage.setItem('zabean-font-size', size);
+  }
+
+  fontSizeBtns.forEach(btn => {
+    btn.addEventListener('click', () => setFontSize(btn.dataset.size));
+  });
+
+  // Apply saved preference (default if not set)
+  setFontSize(localStorage.getItem('zabean-font-size') || 'default');
 
   // ---------------------------------------------------------------------------
   // View mode — updates active class, state.mode, and re-renders
@@ -955,15 +1123,22 @@
       .replace(/>/g, '&gt;');
   }
 
+  function isStructural(fgt) {
+    const basename = fgt.file_path.split('/').pop();
+    return basename === '__init__.py' || basename === '__main__.py';
+  }
+
   function renderFileList() {
     if (!state.data) return;
 
     const q = state.query.toLowerCase();
 
-    // Filter
-    const filtered = q
-      ? state.data.files.filter(f => f.file_path.toLowerCase().includes(q))
-      : state.data.files;
+    // Apply structural filter, then search filter
+    const filtered = state.data.files.filter(f => {
+      if (!state.showStructural && isStructural(f)) return false;
+      if (q && !f.file_path.toLowerCase().includes(q)) return false;
+      return true;
+    });
 
     // Group by directory
     const groups = new Map();
@@ -981,6 +1156,10 @@
 
     // Sort directories alphabetically
     const sortedDirs = [...groups.keys()].sort();
+
+    // Update collapse-all button label
+    const allCollapsed = sortedDirs.length > 0 && sortedDirs.every(d => state.collapsed.has(d));
+    collapseToggleBtn.textContent = allCollapsed ? 'expand all' : 'collapse all';
 
     // Build DOM fragment
     const frag = document.createDocumentFragment();
@@ -1000,8 +1179,10 @@
       // Group header
       const header = document.createElement('div');
       header.className = 'group-header';
+      header.setAttribute('role', 'group');
+      header.setAttribute('aria-label', dir);
       header.innerHTML =
-        `<span class="group-chevron">${isCollapsed ? '›' : '⌄'}</span>` +
+        `<span class="group-chevron" aria-hidden="true">${isCollapsed ? '›' : '⌄'}</span>` +
         `<span class="group-label">${escHtml(dir)}</span>`;
       header.addEventListener('click', () => toggleGroup(dir));
       frag.appendChild(header);
@@ -1017,9 +1198,11 @@
 
         const row = document.createElement('div');
         row.className = 'file-row' + (isSelected ? ' selected' : '');
+        row.setAttribute('role', 'listitem');
+        row.setAttribute('aria-selected', isSelected ? 'true' : 'false');
         row.innerHTML =
           `<div class="file-row-left">` +
-          `  <span class="health-dot ${health}"></span>` +
+          `  <span class="health-dot ${health}" aria-hidden="true"></span>` +
           `  <span class="file-name">${escHtml(basename)}</span>` +
           `</div>` +
           `<span class="file-signal">${escHtml(signal)}</span>`;
@@ -1093,6 +1276,44 @@
     renderFileList();
   }
 
+  function collapseAll() {
+    if (!state.data) return;
+    state.data.files.forEach(f => {
+      const parts = f.file_path.split('/');
+      const dir   = parts.length > 1 ? parts.slice(0, -1).join('/') : '.';
+      state.collapsed.add(dir);
+    });
+    renderFileList();
+  }
+
+  function expandAll() {
+    state.collapsed.clear();
+    renderFileList();
+  }
+
+  collapseToggleBtn.addEventListener('click', () => {
+    const allCollapsed = collapseToggleBtn.textContent === 'expand all';
+    allCollapsed ? expandAll() : collapseAll();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Structural files toggle
+  // ---------------------------------------------------------------------------
+
+  function toggleStructural() {
+    state.showStructural = !state.showStructural;
+    structuralToggle.textContent = state.showStructural ? 'hide structural' : 'show structural';
+    structuralToggle.classList.toggle('active', !state.showStructural);
+    structuralToggle.setAttribute('aria-pressed', state.showStructural ? 'false' : 'true');
+    localStorage.setItem('zabean-show-structural', state.showStructural ? '1' : '0');
+    if (state.data) renderFileList();
+  }
+
+  structuralToggle.addEventListener('click', toggleStructural);
+
+  // Restore saved structural preference
+  if (localStorage.getItem('zabean-show-structural') === '0') toggleStructural();
+
   // ---------------------------------------------------------------------------
   // Search — real-time filter; / focuses, Escape clears
   // ---------------------------------------------------------------------------
@@ -1103,15 +1324,27 @@
   });
 
   document.addEventListener('keydown', e => {
-    if (e.key === '/' && document.activeElement !== searchInput) {
+    const typing = document.activeElement === searchInput;
+
+    if (e.key === '/' && !typing) {
       e.preventDefault();
       searchInput.focus();
+      return;
     }
-    if (e.key === 'Escape' && document.activeElement === searchInput) {
+
+    if (e.key === 'Escape' && typing) {
       searchInput.value = '';
       state.query = '';
       searchInput.blur();
       renderFileList();
+      return;
+    }
+
+    // Shortcuts active only when not typing in search
+    if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (e.key === 's') { e.preventDefault(); toggleStructural(); }
+      if (e.key === 'c') { e.preventDefault(); collapseAll(); }
+      if (e.key === 'e') { e.preventDefault(); expandAll(); }
     }
   });
 
