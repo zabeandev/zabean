@@ -97,9 +97,23 @@ _RUBY_REQUIRE = re.compile(r"""require(?:_relative)?\s+['"]([^'"]+)['"]""", re.M
 _RUST_INTERNAL_PREFIXES = ("crate::", "self::", "super::")
 
 
-def extract_imports(content: str, language: str, file_path: str) -> dict:
+def extract_imports(
+    content: str,
+    language: str,
+    file_path: str,
+    package_name: str | None = None,
+) -> dict:
     """
     Extract import statements from source content.
+
+    Args:
+        content:      raw file content.
+        language:     language name from detect_language().
+        file_path:    repo-relative path to the file (used for context).
+        package_name: top-level package name for this repo (e.g. "zabean").
+                      When provided, Python imports that start with this name
+                      are classified as internal rather than external.
+                      Has no effect on non-Python languages.
 
     Returns:
         {
@@ -128,6 +142,8 @@ def extract_imports(content: str, language: str, file_path: str) -> dict:
         extractor = extractors.get(language)
         if extractor is None:
             result["warnings"].append(f"import extraction not supported for language: {language}")
+        elif language == "python":
+            extractor(content, result, package_name=package_name)
         else:
             extractor(content, result)
     except Exception as exc:
@@ -136,17 +152,31 @@ def extract_imports(content: str, language: str, file_path: str) -> dict:
     return result
 
 
-def _extract_python(content: str, result: dict) -> None:
+def _extract_python(
+    content: str,
+    result: dict,
+    package_name: str | None = None,
+) -> None:
+    # If a package name is known, any import starting with "<package>."
+    # belongs to this repo and is internal.
+    pkg_prefix = (package_name + ".") if package_name else None
+
     for m in _PY_IMPORT.finditer(content):
         module = m.group(1)
         result["raw"].append(f"import {module}")
-        # Plain `import` statements cannot be relative in Python — always external.
-        result["external"].append(module)
+        if pkg_prefix and module.startswith(pkg_prefix):
+            result["internal"].append(module)
+        else:
+            result["external"].append(module)
 
     for m in _PY_FROM.finditer(content):
         module = m.group(1)
         result["raw"].append(f"from {module} import ...")
         if module.startswith("."):
+            # Explicit relative import — always internal.
+            result["internal"].append(module)
+        elif pkg_prefix and module.startswith(pkg_prefix):
+            # Absolute import into this repo's own package — internal.
             result["internal"].append(module)
         else:
             result["external"].append(module)
@@ -276,22 +306,43 @@ def resolve_internal_imports(
 def _try_resolve(import_path: str, file_dir: str, tree_set: set) -> str | None:
     """Attempt to map a single import string to a repo-relative file path."""
     if import_path.startswith(("./", "../")):
+        # Relative path — resolve against the importing file's directory.
         raw = os.path.normpath(os.path.join(file_dir, import_path))
-    elif import_path.startswith("/"):
-        raw = import_path.lstrip("/")
-    else:
+        raw = raw.replace("\\", "/")
+        if raw in tree_set:
+            return raw
+        for suffix in _JS_PROBE_SUFFIXES:
+            candidate = raw + suffix
+            if candidate in tree_set:
+                return candidate
         return None
 
-    # Normalize to forward slashes (os.path.normpath uses OS separator).
-    raw = raw.replace("\\", "/")
+    if import_path.startswith("/"):
+        # Absolute path from repo root.
+        raw = import_path.lstrip("/").replace("\\", "/")
+        if raw in tree_set:
+            return raw
+        for suffix in _JS_PROBE_SUFFIXES:
+            candidate = raw + suffix
+            if candidate in tree_set:
+                return candidate
+        return None
 
-    if raw in tree_set:
-        return raw
+    # Dotted Python module path: e.g. "zabean.ground_truth.collector"
+    # Convert dots to slashes and probe for the file.  Any false positives
+    # (stdlib modules like "os.path") are safely rejected because their
+    # converted paths ("os/path.py") will not exist in tree_set.
+    slash_path = import_path.replace(".", "/")
 
-    for suffix in _JS_PROBE_SUFFIXES:
-        candidate = raw + suffix
-        if candidate in tree_set:
-            return candidate
+    # Module file: zabean.ground_truth.collector → zabean/ground_truth/collector.py
+    candidate = slash_path + ".py"
+    if candidate in tree_set:
+        return candidate
+
+    # Package init: zabean.ground_truth → zabean/ground_truth/__init__.py
+    pkg_candidate = slash_path + "/__init__.py"
+    if pkg_candidate in tree_set:
+        return pkg_candidate
 
     return None
 

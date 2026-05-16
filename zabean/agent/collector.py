@@ -60,6 +60,29 @@ from zabean.utils.validation import validate_file_ground_truth, validate_repo_gr
 
 _log = get_logger("agent.collector")
 
+# Files smaller than this are considered empty and skipped without an error.
+MIN_FILE_SIZE_BYTES = 10
+
+
+def _detect_top_level_package(all_paths: list[str]) -> str | None:
+    """
+    Return the top-level Python package name by looking for __init__.py files
+    at depth 1 (e.g. "zabean/__init__.py" → "zabean").
+
+    Test directories (tests/, test/, spec/, __tests__/) are excluded — they
+    are not source packages and would otherwise be picked first due to shorter
+    names. If multiple source packages remain, returns the shortest name.
+    Returns None if no package marker is found.
+    """
+    packages = []
+    for p in all_paths:
+        parts = p.split("/")
+        if len(parts) == 2 and parts[1] == "__init__.py":
+            name = parts[0]
+            if name not in TEST_DIRECTORY_NAMES:
+                packages.append(name)
+    return min(packages, key=len) if packages else None
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -139,6 +162,7 @@ def _run_pipeline(
     # -------------------------------------------------------------------------
     tree_entries = fetch_repo_tree_local(repo_root)
     all_paths = [e["path"] for e in tree_entries]
+    package_name = _detect_top_level_package(all_paths)
 
     # Detect test directories, README, and manifest from the full tree.
     test_directories = sorted({
@@ -222,7 +246,7 @@ def _run_pipeline(
             content, blob_sha = fetch_file_content_local(path, repo_root)
             commits = fetch_file_commits_local(path, repo_root, days=90)
             language = detect_language(path)
-            imports = extract_imports(content, language, path) if content else {
+            imports = extract_imports(content, language, path, package_name=package_name) if content else {
                 "raw": [], "internal": [], "external": [], "unresolved": [], "warnings": [],
             }
             line_count = content.count("\n") + 1 if content else 0
@@ -297,6 +321,15 @@ def _run_pipeline(
 
     for path in sorted(raw_file_data.keys()):
         fd = raw_file_data[path]
+
+        # Skip files whose content is under the minimum threshold.
+        # These are effectively empty (e.g. __init__.py with just a newline).
+        # Counting them as skipped rather than errors keeps hook output clean.
+        if len((fd.get("content") or "").encode("utf-8")) < MIN_FILE_SIZE_BYTES:
+            log.info(f"[skipped] {path} — empty file")
+            skip_reasons["empty_file"] = skip_reasons.get("empty_file", 0) + 1
+            continue
+
         fgt, error = _assemble_file_ground_truth(
             repo_id=repo_id,
             commit_sha=commit_sha,
