@@ -173,12 +173,14 @@ def fetch_latest_commit_sha_local(repo_root: str) -> str:
 def get_repo_branch_local(repo_root: str) -> str:
     """Return the current branch name, or 'HEAD' if in detached HEAD state."""
     result = subprocess.run(
-        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        ["git", "branch", "--show-current"],
         capture_output=True,
         text=True,
         cwd=repo_root,
     )
-    return result.stdout.strip() if result.returncode == 0 else "HEAD"
+    branch = result.stdout.strip()
+    # --show-current returns an empty string in detached HEAD state
+    return branch if branch else "HEAD"
 
 
 def get_changed_files_local(repo_root: str) -> tuple[list[str], bool]:

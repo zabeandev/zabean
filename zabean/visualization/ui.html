@@ -471,6 +471,138 @@
       -webkit-user-select: none;
     }
 
+    /* =========================================================================
+       File list — phase two
+       ========================================================================= */
+    #file-list-scroll {
+      flex: 1;
+      align-self: stretch;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 4px 0;
+    }
+
+    .group-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px 4px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .group-header:hover .group-label {
+      color: var(--color-gray-light);
+    }
+
+    .group-chevron {
+      font-size: 9px;
+      color: var(--color-gray-dark);
+      flex-shrink: 0;
+      width: 10px;
+      text-align: center;
+    }
+
+    .group-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--color-gray-mid);
+      letter-spacing: 0.03em;
+      border-left: 2px dashed var(--color-gray-dark);
+      padding-left: 6px;
+      flex: 1;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .file-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 3px 10px 3px 22px;
+      cursor: pointer;
+      gap: 8px;
+    }
+
+    .file-row:hover {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .file-row.selected {
+      background: var(--color-maize-dark);
+    }
+
+    .file-row-left {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .health-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .health-dot.green { background: var(--color-green-bright); }
+    .health-dot.amber { background: var(--color-amber); }
+    .health-dot.red   { background: var(--color-red-bright); }
+
+    .file-name {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--color-white-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .file-row.selected .file-name {
+      color: var(--color-maize);
+    }
+
+    .file-signal {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--color-gray-dark);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .file-row.selected .file-signal {
+      color: var(--color-maize-dim);
+    }
+
+    /* =========================================================================
+       Detail panel — phase two
+       ========================================================================= */
+    .detail-file-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--color-navy-light);
+      width: 100%;
+      align-self: flex-start;
+    }
+
+    .detail-file-name {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--color-maize);
+      margin-bottom: 4px;
+    }
+
+    .detail-file-path {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--color-gray-mid);
+      word-break: break-all;
+    }
+
   </style>
 </head>
 <body>
@@ -516,15 +648,15 @@
         <div class="panel-header">
           <span class="panel-title">files</span>
           <input
+            id="search-input"
             class="search-input"
             type="text"
             placeholder="filter files…"
-            disabled
             aria-label="Filter files"
           >
         </div>
         <div class="panel-body">
-          <span class="empty-state">files load here</span>
+          <div id="file-list-scroll"></div>
         </div>
       </div>
 
@@ -536,7 +668,7 @@
         <div class="panel-header">
           <span class="panel-title">detail</span>
         </div>
-        <div class="panel-body">
+        <div class="panel-body" id="bottom-right-body">
           <span class="empty-state" id="detail-empty">select a file to explore its dependencies</span>
         </div>
       </div>
@@ -673,7 +805,7 @@
   applyLayout();
 
   // ===========================================================================
-  // View mode selector
+  // Constants shared across phases
   // ===========================================================================
 
   const EMPTY_STATE_TEXT = {
@@ -683,16 +815,311 @@
     structure:    'select a file to explore its structure',
   };
 
-  const viewBtns      = document.querySelectorAll('.view-btn');
-  const detailEmpty   = document.getElementById('detail-empty');
+  const viewBtns = document.querySelectorAll('.view-btn');
+
+  // ===========================================================================
+  // Phase two — state, file list, selection, search, status bar
+  // ===========================================================================
+
+  const state = {
+    data:         null,   // API response: { repo, files, collected_at, commit_sha }
+    selectedPath: null,
+    mode:         'dependency',
+    query:        '',
+    collapsed:    new Set(),
+  };
+
+  // DOM refs
+  const fileListScroll  = document.getElementById('file-list-scroll');
+  const searchInput     = document.getElementById('search-input');
+  const bottomRightBody = document.getElementById('bottom-right-body');
+  const statusRepo      = document.querySelector('.status-repo');
+  const statusBranch    = document.querySelector('.status-branch');
+  const statusSha       = document.querySelector('.status-sha');
+  const statusCollected = document.querySelector('.status-collected');
+
+  // ---------------------------------------------------------------------------
+  // View mode — updates active class, state.mode, and re-renders
+  // ---------------------------------------------------------------------------
 
   viewBtns.forEach(btn => {
     btn.addEventListener('click', () => {
       viewBtns.forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      detailEmpty.textContent = EMPTY_STATE_TEXT[btn.dataset.mode];
+      state.mode = btn.dataset.mode;
+      if (state.data) {
+        renderFileList();
+        updateDetailPanel();
+      } else {
+        // No data yet — just update the top panel title
+        const el = document.getElementById('detail-empty');
+        if (el) el.textContent = EMPTY_STATE_TEXT[btn.dataset.mode];
+      }
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Boot — fetch ground truth from serve.py
+  // ---------------------------------------------------------------------------
+
+  async function init() {
+    try {
+      const res = await fetch('/api/ground-truth');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      state.data = await res.json();
+      updateStatusBarFromData();
+      renderFileList();
+    } catch (_err) {
+      fileListScroll.innerHTML =
+        `<div style="padding:12px 10px;font-size:11px;` +
+        `color:var(--color-amber);font-family:var(--font-mono);">` +
+        `could not load ground truth — is serve.py running?</div>`;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Status bar
+  // ---------------------------------------------------------------------------
+
+  function updateStatusBarFromData() {
+    const { repo, collected_at } = state.data;
+    const repoName = (repo.repo_id || '').split('/').pop() || 'zabean';
+    statusRepo.textContent      = repoName;
+    statusBranch.textContent    = repo.branch || '—';
+    statusSha.textContent       = (repo.commit_sha || '').slice(0, 7) || '—';
+    // collected_at is resolved by serve.py from repo.fetched_at
+    statusCollected.textContent = formatRelativeTime(collected_at || repo.fetched_at);
+  }
+
+  function formatRelativeTime(iso) {
+    if (!iso) return 'last collected —';
+    const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (diff < 60)    return 'collected just now';
+    if (diff < 3600)  return `collected ${Math.round(diff / 60)}m ago`;
+    if (diff < 86400) return `collected ${Math.round(diff / 3600)}h ago`;
+    return `collected ${Math.round(diff / 86400)}d ago`;
+  }
+
+  // ---------------------------------------------------------------------------
+  // File list rendering
+  // ---------------------------------------------------------------------------
+
+  function getSignal(fgt) {
+    // FileGroundTruth.to_dict() serialises to flat fields — no nesting.
+    switch (state.mode) {
+      case 'dependency':
+        return (fgt.imports_internal?.length ?? 0) + ' deps';
+      case 'contributors':
+        return (fgt.commit_frequency_30d ?? 0) + ' commits';
+      case 'health':
+        return (fgt.could_not_determine?.length ?? 0) + ' unknowns';
+      case 'structure':
+        return (fgt.line_count ?? 0) + ' lines';
+      default:
+        return '';
+    }
+  }
+
+  function getHealthClass(fgt) {
+    const n = fgt.could_not_determine?.length ?? 0;
+    if (n === 0) return 'green';
+    if (n <= 3)  return 'amber';
+    return 'red';
+  }
+
+  function sortFiles(files) {
+    const f = [...files];
+    switch (state.mode) {
+      case 'dependency':
+        return f.sort((a, b) =>
+          (b.imports_internal?.length ?? 0) -
+          (a.imports_internal?.length ?? 0));
+      case 'contributors':
+        return f.sort((a, b) =>
+          (b.commit_frequency_30d ?? 0) -
+          (a.commit_frequency_30d ?? 0));
+      case 'health':
+        return f.sort((a, b) =>
+          (b.could_not_determine?.length ?? 0) -
+          (a.could_not_determine?.length ?? 0));
+      case 'structure':
+      default:
+        return f.sort((a, b) => a.file_path.localeCompare(b.file_path));
+    }
+  }
+
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function renderFileList() {
+    if (!state.data) return;
+
+    const q = state.query.toLowerCase();
+
+    // Filter
+    const filtered = q
+      ? state.data.files.filter(f => f.file_path.toLowerCase().includes(q))
+      : state.data.files;
+
+    // Group by directory
+    const groups = new Map();
+    for (const fgt of filtered) {
+      const parts = fgt.file_path.split('/');
+      const dir   = parts.length > 1 ? parts.slice(0, -1).join('/') : '.';
+      if (!groups.has(dir)) groups.set(dir, []);
+      groups.get(dir).push(fgt);
+    }
+
+    // Sort files within each group by current mode
+    for (const [dir, files] of groups) {
+      groups.set(dir, sortFiles(files));
+    }
+
+    // Sort directories alphabetically
+    const sortedDirs = [...groups.keys()].sort();
+
+    // Build DOM fragment
+    const frag = document.createDocumentFragment();
+
+    if (sortedDirs.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.style.cssText = 'padding: 24px; pointer-events: none;';
+      empty.textContent = q ? 'no files match' : 'no files collected yet';
+      frag.appendChild(empty);
+    }
+
+    for (const dir of sortedDirs) {
+      const files       = groups.get(dir);
+      const isCollapsed = state.collapsed.has(dir);
+
+      // Group header
+      const header = document.createElement('div');
+      header.className = 'group-header';
+      header.innerHTML =
+        `<span class="group-chevron">${isCollapsed ? '›' : '⌄'}</span>` +
+        `<span class="group-label">${escHtml(dir)}</span>`;
+      header.addEventListener('click', () => toggleGroup(dir));
+      frag.appendChild(header);
+
+      if (isCollapsed) continue;
+
+      // File rows
+      for (const fgt of files) {
+        const basename   = fgt.file_path.split('/').pop();
+        const health     = getHealthClass(fgt);
+        const signal     = getSignal(fgt);
+        const isSelected = fgt.file_path === state.selectedPath;
+
+        const row = document.createElement('div');
+        row.className = 'file-row' + (isSelected ? ' selected' : '');
+        row.innerHTML =
+          `<div class="file-row-left">` +
+          `  <span class="health-dot ${health}"></span>` +
+          `  <span class="file-name">${escHtml(basename)}</span>` +
+          `</div>` +
+          `<span class="file-signal">${escHtml(signal)}</span>`;
+        row.addEventListener('click', () => selectFile(fgt.file_path));
+        frag.appendChild(row);
+      }
+    }
+
+    fileListScroll.innerHTML = '';
+    fileListScroll.appendChild(frag);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Selection
+  // ---------------------------------------------------------------------------
+
+  function selectFile(path) {
+    // Clicking the already-selected file deselects it
+    state.selectedPath = (state.selectedPath === path) ? null : path;
+    renderFileList();
+    updateDetailPanel();
+
+    // Status bar SHA: show file's last commit when selected, repo SHA otherwise
+    if (state.selectedPath && state.data) {
+      const fgt = state.data.files.find(f => f.file_path === state.selectedPath);
+      // Flat field name: most_recent_commit_sha (not contributor_signals.last_commit_sha)
+      const sha = fgt?.most_recent_commit_sha;
+      statusSha.textContent = sha ? sha.slice(0, 7) : (state.data.repo.commit_sha || '').slice(0, 7) || '—';
+    } else if (state.data) {
+      statusSha.textContent = (state.data.repo.commit_sha || '').slice(0, 7) || '—';
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Detail panel
+  // ---------------------------------------------------------------------------
+
+  function updateDetailPanel() {
+    if (!state.selectedPath || !state.data) {
+      bottomRightBody.innerHTML =
+        `<span class="empty-state" id="detail-empty">` +
+        escHtml(EMPTY_STATE_TEXT[state.mode]) +
+        `</span>`;
+      return;
+    }
+
+    const fgt = state.data.files.find(f => f.file_path === state.selectedPath);
+    if (!fgt) {
+      bottomRightBody.innerHTML =
+        `<span class="empty-state" id="detail-empty">` +
+        escHtml(EMPTY_STATE_TEXT[state.mode]) +
+        `</span>`;
+      return;
+    }
+
+    const basename = fgt.file_path.split('/').pop();
+    bottomRightBody.innerHTML =
+      `<div class="detail-file-header">` +
+      `  <div class="detail-file-name">${escHtml(basename)}</div>` +
+      `  <div class="detail-file-path">${escHtml(fgt.file_path)}</div>` +
+      `</div>`;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Group collapse / expand
+  // ---------------------------------------------------------------------------
+
+  function toggleGroup(dir) {
+    if (state.collapsed.has(dir)) state.collapsed.delete(dir);
+    else state.collapsed.add(dir);
+    renderFileList();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Search — real-time filter; / focuses, Escape clears
+  // ---------------------------------------------------------------------------
+
+  searchInput.addEventListener('input', () => {
+    state.query = searchInput.value;
+    renderFileList();
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === '/' && document.activeElement !== searchInput) {
+      e.preventDefault();
+      searchInput.focus();
+    }
+    if (e.key === 'Escape' && document.activeElement === searchInput) {
+      searchInput.value = '';
+      state.query = '';
+      searchInput.blur();
+      renderFileList();
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Boot
+  // ---------------------------------------------------------------------------
+
+  init();
 
 </script>
 </body>
