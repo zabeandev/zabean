@@ -184,6 +184,11 @@
 
     #top-panel .panel-body {
       background: var(--color-navy-dark);
+      /* Graph host: block layout + relative positioning for the overlays */
+      position: relative;
+      display: block;
+      overflow: hidden;
+      padding: 0;
     }
 
     /* =========================================================================
@@ -733,6 +738,73 @@
       }
     }
 
+    /* =========================================================================
+       Dependency graph — phase three
+       ========================================================================= */
+    #graph-svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+    }
+
+    .node-circle {
+      cursor: grab;
+      transition: stroke 0.1s, stroke-width 0.1s;
+    }
+
+    .node-group.dragging .node-circle {
+      cursor: grabbing;
+    }
+
+    .node-label {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      fill: var(--color-gray-light);
+      pointer-events: none;
+      user-select: none;
+      text-anchor: middle;
+    }
+
+    /* Hover tooltip — absolutely placed inside the top panel body */
+    #graph-tooltip {
+      position: absolute;
+      pointer-events: none;
+      display: none;
+      z-index: 50;
+      background: var(--color-navy-mid);
+      border: 1px solid var(--color-maize);
+      color: var(--color-white-dim);
+      font: 11px var(--font-mono);
+      line-height: 1.5;
+      padding: 8px;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+
+    /* Fit-to-bounds button — stacked just above the minimap */
+    #graph-reset-btn {
+      position: absolute;
+      right: 8px;
+      bottom: 96px;
+      z-index: 40;
+      min-height: 20px;
+      background: var(--color-navy-dark);
+      color: var(--color-maize);
+      border: 1px solid var(--color-maize-dim);
+      border-radius: 3px;
+      font-family: var(--font-mono);
+      font-size: calc(var(--fs-xs) * var(--font-scale));
+      padding: 0 8px;
+      cursor: pointer;
+      transition: background 0.1s, border-color 0.1s;
+    }
+
+    #graph-reset-btn:hover {
+      background: var(--color-maize-dark);
+      border-color: var(--color-maize);
+    }
+
   </style>
 </head>
 <body>
@@ -768,7 +840,7 @@
         </div>
       </div>
       <div class="panel-body">
-        <span class="empty-state">graph renders here</span>
+        <!-- D3 dependency graph mounts here via initGraph() -->
       </div>
     </div>
 
@@ -1014,6 +1086,7 @@
       if (state.data) {
         renderFileList();
         updateDetailPanel();
+        updateGraphMode();
       } else {
         // No data yet — just update the top panel title
         const el = document.getElementById('detail-empty');
@@ -1033,6 +1106,7 @@
       state.data = await res.json();
       updateStatusBarFromData();
       renderFileList();
+      initGraph();
     } catch (_err) {
       fileListScroll.innerHTML =
         `<div style="padding:12px 10px;font-size:11px;` +
@@ -1230,6 +1304,9 @@
     } else if (state.data) {
       statusSha.textContent = (state.data.repo.commit_sha || '').slice(0, 7) || '—';
     }
+
+    // Mirror the selection into the graph (no-op until the graph is built)
+    highlightGraph(state.selectedPath);
   }
 
   // ---------------------------------------------------------------------------
@@ -1292,6 +1369,446 @@
     allCollapsed ? expandAll() : collapseAll();
   });
 
+  // ===========================================================================
+  // Phase three — dependency graph (D3 v7 force-directed)
+  // ===========================================================================
+
+  // Health → SVG colors. Literal hex: CSS var() does not resolve in SVG attrs.
+  const HEALTH_FILL   = { green: '#2d6a4f', amber: '#4a3c10', red: '#3a0a08' };
+  const HEALTH_STROKE = { green: '#52b788', amber: '#e8c84a', red: '#e74c3c' };
+  const GRAPH_NAVY    = '#2d3748';   // --color-navy-light
+  const GRAPH_MAIZE   = '#e8c84a';   // --color-maize
+
+  const MM_W = 120, MM_H = 80;       // minimap dimensions
+
+  // Graph module state — populated by initGraph()
+  let graphInited      = false;
+  let graphPanel       = null;       // the #top-panel .panel-body element
+  let graphWidth       = 0;
+  let graphHeight      = 0;
+  let svg, zoomLayer, simulation, zoom;
+  let nodes = [], links = [], allLinks = [];
+  let nodeSel, linkSel, minimapGroup, tooltip;
+  let radiusScale      = null;
+  let currentTransform = d3.zoomIdentity;
+  let minimapMap       = null;       // {minX,minY,k,offX,offY} for click-to-pan
+
+  // Path helpers
+  function basename(p) { return p.split('/').pop(); }
+  function dirname(p)  { const i = p.lastIndexOf('/'); return i < 0 ? '.' : p.slice(0, i); }
+
+  // Raw signal value driving node radius — mode dependent
+  function signalValue(fgt, mode) {
+    switch (mode) {
+      case 'dependency':   return (fgt.imports_internal?.length ?? 0) +
+                                  (fgt.dependents?.length ?? 0);
+      case 'contributors': return fgt.commit_frequency_30d ?? 0;
+      case 'structure':    return fgt.line_count ?? 0;
+      case 'health':
+      default:             return 10;   // uniform — color carries the signal
+    }
+  }
+
+  // Build a [min,max] → [6,18] mapper for the current mode; uniform input → 10
+  function buildRadiusScale(mode) {
+    if (mode === 'health') return () => 10;
+    const vals = state.data.files.map(f => signalValue(f, mode));
+    const min = d3.min(vals), max = d3.max(vals);
+    if (min === max) return () => 10;
+    const scale = d3.scaleLinear().domain([min, max]).range([6, 18]).clamp(true);
+    return fgt => scale(signalValue(fgt, mode));
+  }
+
+  function computeRadius(fgt) {
+    return radiusScale ? radiusScale(fgt) : 10;
+  }
+
+  // d3.drag — pins a node while dragging; a near-zero move counts as a click
+  function makeDrag(sim) {
+    let start = [0, 0];
+    return d3.drag()
+      .on('start', function (event, d) {
+        if (!event.active) sim.alphaTarget(0.3).restart();
+        d.fx = d.x; d.fy = d.y;
+        start = [event.x, event.y];
+        d3.select(this).classed('dragging', true);
+      })
+      .on('drag', function (event, d) {
+        d.fx = event.x; d.fy = event.y;
+      })
+      .on('end', function (event, d) {
+        if (!event.active) sim.alphaTarget(0);
+        d3.select(this).classed('dragging', false);
+        if (Math.hypot(event.x - start[0], event.y - start[1]) < 3) {
+          d.fx = null; d.fy = null;     // it was a click — leave unpinned
+          selectFile(d.id);
+        }
+        // else: a real drag — keep d.fx/d.fy so the node stays pinned
+      });
+  }
+
+  function endId(end) { return end && end.id !== undefined ? end.id : end; }
+
+  function linkTouches(d, path) {
+    return endId(d.source) === path || endId(d.target) === path;
+  }
+
+  // Link endpoint pulled back to the target circle's edge so the arrow shows
+  function linkEnd(d, axis) {
+    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const back = (d.target.radius || 10) + 3;
+    return axis === 'x' ? d.target.x - dx / dist * back
+                        : d.target.y - dy / dist * back;
+  }
+
+  function initGraph() {
+    if (graphInited || !state.data) return;
+    graphInited = true;
+
+    graphPanel  = topPanel.querySelector('.panel-body');
+    graphPanel.innerHTML = '';
+    graphWidth  = graphPanel.clientWidth  || 800;
+    graphHeight = graphPanel.clientHeight || 400;
+
+    radiusScale = buildRadiusScale(state.mode);
+
+    // Nodes — one per file
+    nodes = state.data.files.map(fgt => ({
+      id:           fgt.file_path,
+      label:        basename(fgt.file_path).replace(/\.py$/, ''),
+      group:        dirname(fgt.file_path),
+      health:       getHealthClass(fgt),
+      isStructural: isStructural(fgt),
+      radius:       computeRadius(fgt),
+      fgt:          fgt,
+    }));
+    const nodeSet = new Set(nodes.map(n => n.id));
+
+    // Links — internal imports only; drop edges to files outside the node set
+    allLinks = [];
+    state.data.files.forEach(fgt => {
+      (fgt.imports_internal || []).forEach(target => {
+        if (nodeSet.has(target)) allLinks.push({ source: fgt.file_path, target });
+      });
+    });
+    links = allLinks.slice();
+
+    // SVG scaffold
+    svg = d3.select(graphPanel).append('svg')
+      .attr('id', 'graph-svg')
+      .attr('width', graphWidth)
+      .attr('height', graphHeight);
+
+    // Two arrowhead markers — neutral and highlighted
+    const defs = svg.append('defs');
+    [['arrowhead', GRAPH_NAVY], ['arrowhead-hl', GRAPH_MAIZE]].forEach(([id, color]) => {
+      defs.append('marker')
+        .attr('id', id)
+        .attr('viewBox', '0 -5 10 10')
+        .attr('refX', 9).attr('refY', 0)
+        .attr('markerWidth', 7).attr('markerHeight', 7)
+        .attr('markerUnits', 'userSpaceOnUse')
+        .attr('orient', 'auto')
+        .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', color);
+    });
+
+    zoomLayer       = svg.append('g').attr('id', 'graph-zoom-layer');
+    const linkLayer = zoomLayer.append('g').attr('class', 'links');
+    const nodeLayer = zoomLayer.append('g').attr('class', 'nodes');
+
+    simulation = d3.forceSimulation(nodes)
+      .force('link',    d3.forceLink(links).id(d => d.id).distance(80))
+      .force('charge',  d3.forceManyBody().strength(-200))
+      .force('center',  d3.forceCenter(graphWidth / 2, graphHeight / 2))
+      .force('collide', d3.forceCollide(d => d.radius + 4));
+
+    linkSel = linkLayer.selectAll('line').data(links).join('line')
+      .attr('class', 'link')
+      .attr('stroke', GRAPH_NAVY)
+      .attr('stroke-width', 1)
+      .attr('stroke-opacity', 0.4)
+      .attr('marker-end', 'url(#arrowhead)');
+
+    nodeSel = nodeLayer.selectAll('g').data(nodes).join('g')
+      .attr('class', 'node-group')
+      .call(makeDrag(simulation))
+      .on('mouseover', showTooltip)
+      .on('mousemove', showTooltip)
+      .on('mouseout', hideTooltip)
+      .on('dblclick', function (event, d) {
+        event.stopPropagation();        // don't also trigger the background fit
+        d.fx = null; d.fy = null;       // release a pinned node
+        simulation.alpha(0.3).restart();
+      });
+
+    nodeSel.append('circle')
+      .attr('class', 'node-circle')
+      .attr('r', d => d.radius)
+      .attr('fill',   d => HEALTH_FILL[d.health])
+      .attr('stroke', d => HEALTH_STROKE[d.health])
+      .attr('stroke-width', 1.5);
+
+    nodeSel.append('text')
+      .attr('class', 'node-label')
+      .attr('dy', d => d.radius + 10)
+      .text(d => d.label);
+
+    simulation.on('tick', () => {
+      linkSel
+        .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+        .attr('x2', d => linkEnd(d, 'x')).attr('y2', d => linkEnd(d, 'y'));
+      nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
+      renderMinimap();
+    });
+
+    // Zoom / pan — transform applies to the zoom layer only
+    zoom = d3.zoom().scaleExtent([0.2, 4]).on('zoom', event => {
+      currentTransform = event.transform;
+      zoomLayer.attr('transform', event.transform);
+      renderMinimap();
+    });
+    svg.call(zoom);
+    svg.on('dblclick.zoom', null);      // replace zoom's dblclick with fit
+
+    svg.on('click', event => {
+      if (event.target === svg.node()) selectFile(null);
+    });
+    svg.on('dblclick', event => {
+      if (event.target === svg.node()) fitToBounds();
+    });
+
+    // Minimap — fixed overlay, deliberately outside the zoom layer
+    minimapGroup = svg.append('g').attr('id', 'minimap-group');
+
+    // Tooltip + reset button live in the (position:relative) panel body
+    tooltip = document.createElement('div');
+    tooltip.id = 'graph-tooltip';
+    graphPanel.appendChild(tooltip);
+
+    const resetBtn = document.createElement('button');
+    resetBtn.id = 'graph-reset-btn';
+    resetBtn.textContent = '⌘ reset';
+    resetBtn.title = 'Fit all nodes to view';
+    resetBtn.addEventListener('click', fitToBounds);
+    graphPanel.appendChild(resetBtn);
+
+    positionMinimap();
+    updateLabelVisibility();
+    syncStructuralVisibility();
+    highlightGraph(state.selectedPath);
+
+    // Resize — resize SVG and recenter without rebuilding the simulation
+    new ResizeObserver(() => {
+      graphWidth  = graphPanel.clientWidth;
+      graphHeight = graphPanel.clientHeight;
+      if (!graphWidth || !graphHeight) return;
+      svg.attr('width', graphWidth).attr('height', graphHeight);
+      simulation.force('center', d3.forceCenter(graphWidth / 2, graphHeight / 2));
+      simulation.alpha(0.1).restart();
+      positionMinimap();
+      renderMinimap();
+    }).observe(graphPanel);
+  }
+
+  // Label visibility — hidden when too small, always shown for the selection
+  function updateLabelVisibility() {
+    if (!graphInited) return;
+    nodeSel.select('.node-label').attr('display', d =>
+      (d.radius >= 8 || d.id === state.selectedPath) ? '' : 'none');
+  }
+
+  // Recompute radii and reheat when the view mode changes
+  function updateGraphMode() {
+    if (!graphInited) return;
+    radiusScale = buildRadiusScale(state.mode);
+    nodes.forEach(n => { n.radius = computeRadius(n.fgt); });
+    nodeSel.select('.node-circle').attr('r', d => d.radius);
+    nodeSel.select('.node-label').attr('dy', d => d.radius + 10);
+    simulation.force('collide', d3.forceCollide(d => d.radius + 4));
+    updateLabelVisibility();
+    highlightGraph(state.selectedPath);
+    simulation.alpha(0.3).restart();
+  }
+
+  // Mirror state.showStructural into the graph: hide nodes + drop their links
+  function syncStructuralVisibility() {
+    if (!graphInited) return;
+    const show = state.showStructural;
+
+    nodeSel.attr('display', d => (d.isStructural && !show) ? 'none' : '');
+    nodeSel.select('.node-circle')
+      .attr('opacity', d => (d.isStructural && show) ? 0.5 : 1);
+
+    const structuralIds = new Set(nodes.filter(n => n.isStructural).map(n => n.id));
+    links = show
+      ? allLinks.slice()
+      : allLinks.filter(l => !structuralIds.has(endId(l.source)) &&
+                             !structuralIds.has(endId(l.target)));
+
+    linkSel = svg.select('.links').selectAll('line')
+      .data(links, d => endId(d.source) + '->' + endId(d.target))
+      .join(
+        enter => enter.append('line')
+          .attr('class', 'link')
+          .attr('marker-end', 'url(#arrowhead)'),
+        update => update,
+        exit  => exit.remove(),
+      );
+    simulation.force('link').links(links);
+    simulation.alpha(0.3).restart();
+    highlightGraph(state.selectedPath);
+  }
+
+  // Apply / clear selection styling on nodes and links
+  function highlightGraph(path) {
+    if (!graphInited) return;
+
+    nodeSel.select('.node-circle')
+      .attr('stroke', d => d.id === path ? GRAPH_MAIZE : HEALTH_STROKE[d.health])
+      .attr('stroke-width', d => d.id === path ? 3 : 1.5);
+
+    updateLabelVisibility();
+
+    if (!path) {
+      linkSel
+        .attr('stroke', GRAPH_NAVY)
+        .attr('stroke-width', 1)
+        .attr('stroke-opacity', 0.4)
+        .attr('marker-end', 'url(#arrowhead)');
+      return;
+    }
+
+    linkSel
+      .attr('stroke', d => linkTouches(d, path) ? GRAPH_MAIZE : GRAPH_NAVY)
+      .attr('stroke-width', d => linkTouches(d, path) ? 1.5 : 0.5)
+      .attr('stroke-opacity', d => linkTouches(d, path) ? 0.8 : 0.15)
+      .attr('marker-end', d =>
+        linkTouches(d, path) ? 'url(#arrowhead-hl)' : 'url(#arrowhead)');
+
+    nodeSel.filter(d => d.id === path).raise();   // bring selection to front
+  }
+
+  // Hover tooltip — positioned near the cursor, clamped to the panel
+  function showTooltip(event, d) {
+    if (!tooltip) return;
+    tooltip.innerHTML =
+      escHtml(d.fgt.file_path) + '<br>' +
+      escHtml(getSignal(d.fgt)) + '<br>' +
+      'health: ' + d.health;
+    tooltip.style.display = 'block';
+    const rect = graphPanel.getBoundingClientRect();
+    let x = event.clientX - rect.left + 14;
+    let y = event.clientY - rect.top + 14;
+    if (x + tooltip.offsetWidth  > rect.width)  x = rect.width  - tooltip.offsetWidth  - 6;
+    if (y + tooltip.offsetHeight > rect.height) y = rect.height - tooltip.offsetHeight - 6;
+    tooltip.style.left = Math.max(4, x) + 'px';
+    tooltip.style.top  = Math.max(4, y) + 'px';
+  }
+
+  function hideTooltip() {
+    if (tooltip) tooltip.style.display = 'none';
+  }
+
+  // Visible nodes — excludes hidden structural files
+  function visibleNodes() {
+    return nodes.filter(n => !(n.isStructural && !state.showStructural));
+  }
+
+  // Reset zoom so every visible node fits with 40px padding
+  function fitToBounds() {
+    if (!graphInited) return;
+    const vis = visibleNodes();
+    if (!vis.length) return;
+    const minX = d3.min(vis, n => n.x - n.radius);
+    const maxX = d3.max(vis, n => n.x + n.radius);
+    const minY = d3.min(vis, n => n.y - n.radius);
+    const maxY = d3.max(vis, n => n.y + n.radius);
+    const spanX = (maxX - minX) || 1, spanY = (maxY - minY) || 1;
+    const pad = 40;
+    let k = Math.min((graphWidth - 2 * pad) / spanX,
+                     (graphHeight - 2 * pad) / spanY);
+    k = Math.max(0.2, Math.min(4, k));
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    const t = d3.zoomIdentity
+      .translate(graphWidth / 2 - cx * k, graphHeight / 2 - cy * k)
+      .scale(k);
+    svg.transition().duration(400).call(zoom.transform, t);
+  }
+
+  function positionMinimap() {
+    if (minimapGroup)
+      minimapGroup.attr('transform',
+        `translate(${graphWidth - MM_W - 8}, ${graphHeight - MM_H - 8})`);
+  }
+
+  // Draw minimap dots + the viewport rectangle for the current transform
+  function renderMinimap() {
+    if (!minimapGroup) return;
+
+    // One-time scaffold
+    if (minimapGroup.select('.mm-bg').empty()) {
+      minimapGroup.append('rect').attr('class', 'mm-bg')
+        .attr('width', MM_W).attr('height', MM_H)
+        .attr('fill', '#0d1117')
+        .attr('stroke', GRAPH_NAVY).attr('stroke-width', 1);
+      minimapGroup.append('g').attr('class', 'mm-dots');
+      minimapGroup.append('rect').attr('class', 'mm-viewport')
+        .attr('fill', '#ffffff').attr('fill-opacity', 0.2)
+        .attr('stroke', '#ffffff').attr('stroke-width', 1)
+        .attr('pointer-events', 'none');
+      minimapGroup.style('cursor', 'pointer')
+        .on('click', minimapClick)
+        .on('mousedown', ev => ev.stopPropagation());   // don't pan main graph
+    }
+
+    const vis = visibleNodes();
+    if (!vis.length) return;
+
+    const minX = d3.min(vis, n => n.x), maxX = d3.max(vis, n => n.x);
+    const minY = d3.min(vis, n => n.y), maxY = d3.max(vis, n => n.y);
+    const spanX = (maxX - minX) || 1, spanY = (maxY - minY) || 1;
+    const pad = 6;
+    const k = Math.min((MM_W - 2 * pad) / spanX, (MM_H - 2 * pad) / spanY);
+    const offX = (MM_W - spanX * k) / 2, offY = (MM_H - spanY * k) / 2;
+    minimapMap = { minX, minY, k, offX, offY };
+    const mx = x => offX + (x - minX) * k;
+    const my = y => offY + (y - minY) * k;
+
+    minimapGroup.select('.mm-dots').selectAll('circle')
+      .data(vis, d => d.id)
+      .join('circle')
+      .attr('r', 2)
+      .attr('cx', d => mx(d.x))
+      .attr('cy', d => my(d.y))
+      .attr('fill', d => HEALTH_STROKE[d.health]);
+
+    // Viewport rect — the graph area currently visible under the transform
+    const tl = currentTransform.invert([0, 0]);
+    const br = currentTransform.invert([graphWidth, graphHeight]);
+    const vx = mx(tl[0]), vy = my(tl[1]);
+    const x0 = Math.max(0, Math.min(MM_W, vx));
+    const y0 = Math.max(0, Math.min(MM_H, vy));
+    const vw = Math.max(0, Math.min(MM_W, mx(br[0])) - x0);
+    const vh = Math.max(0, Math.min(MM_H, my(br[1])) - y0);
+    minimapGroup.select('.mm-viewport')
+      .attr('x', x0).attr('y', y0)
+      .attr('width', vw).attr('height', vh);
+  }
+
+  // Click the minimap → pan the main graph to center on that point
+  function minimapClick(event) {
+    if (!minimapMap) return;
+    const [mxp, myp] = d3.pointer(event, minimapGroup.node());
+    const gx = minimapMap.minX + (mxp - minimapMap.offX) / minimapMap.k;
+    const gy = minimapMap.minY + (myp - minimapMap.offY) / minimapMap.k;
+    const k = currentTransform.k;
+    const t = d3.zoomIdentity
+      .translate(graphWidth / 2 - gx * k, graphHeight / 2 - gy * k)
+      .scale(k);
+    svg.transition().duration(300).call(zoom.transform, t);
+  }
+
   // ---------------------------------------------------------------------------
   // Structural files toggle
   // ---------------------------------------------------------------------------
@@ -1300,7 +1817,10 @@
     state.showStructural        = show;
     showStructuralCheck.checked = show;
     localStorage.setItem('zabean-show-structural', show ? '1' : '0');
-    if (state.data) renderFileList();
+    if (state.data) {
+      renderFileList();
+      syncStructuralVisibility();
+    }
   }
 
   function toggleStructural() {
