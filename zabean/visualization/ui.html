@@ -757,13 +757,32 @@
       cursor: grabbing;
     }
 
-    .node-label {
+    /* Inline node label — filename + package chip, hosted in a foreignObject */
+    .node-fo {
+      overflow: visible;
+      pointer-events: none;
+    }
+
+    .node-label-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      white-space: nowrap;
       font-family: var(--font-mono);
       font-size: 9px;
-      fill: var(--color-gray-light);
+      color: var(--color-gray-light);
       pointer-events: none;
-      user-select: none;
-      text-anchor: middle;
+    }
+
+    .node-package-chip {
+      display: inline-block;
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-size: 8px;
+      font-family: var(--font-mono);
+      opacity: 0.85;
+      /* background and color set inline from package color scale */
     }
 
     /* Hover tooltip — absolutely placed inside the top panel body */
@@ -803,6 +822,40 @@
     #graph-reset-btn:hover {
       background: var(--color-maize-dark);
       border-color: var(--color-maize);
+    }
+
+    /* Package color legend — bottom-left of the top panel body */
+    #graph-legend {
+      position: absolute;
+      left: 12px;
+      bottom: 12px;
+      z-index: 40;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      background: var(--color-navy-darkest);
+      border: 1px solid var(--color-navy-light);
+      padding: 8px;
+      border-radius: 4px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .legend-swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    .legend-label {
+      font: 10px var(--font-mono);
+      color: var(--color-gray-light);
+      white-space: nowrap;
     }
 
   </style>
@@ -1104,6 +1157,7 @@
       const res = await fetch('/api/ground-truth');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       state.data = await res.json();
+      buildPackageColors();
       updateStatusBarFromData();
       renderFileList();
       initGraph();
@@ -1373,9 +1427,9 @@
   // Phase three — dependency graph (D3 v7 force-directed)
   // ===========================================================================
 
-  // Health → SVG colors. Literal hex: CSS var() does not resolve in SVG attrs.
-  const HEALTH_FILL   = { green: '#2d6a4f', amber: '#4a3c10', red: '#3a0a08' };
-  const HEALTH_STROKE = { green: '#52b788', amber: '#e8c84a', red: '#e74c3c' };
+  // SVG colors. Literal hex: CSS var() does not resolve in SVG attrs.
+  // Health-alert stroke colors (green health derives its stroke from the package).
+  const HEALTH_STROKE = { amber: '#e8c84a', red: '#e74c3c' };
   const GRAPH_NAVY    = '#2d3748';   // --color-navy-light
   const GRAPH_MAIZE   = '#e8c84a';   // --color-maize
 
@@ -1392,6 +1446,85 @@
   let radiusScale      = null;
   let currentTransform = d3.zoomIdentity;
   let minimapMap       = null;       // {minX,minY,k,offX,offY} for click-to-pan
+
+  // ---------------------------------------------------------------------------
+  // Package color system — the complete color API for the graph.
+  // The ordinal scale is built once by buildPackageColors() (called from init);
+  // every color decision in the graph routes through one of these four getters.
+  // ---------------------------------------------------------------------------
+
+  let uniquePackages    = [];
+  let packageColorScale = null;
+
+  // Package key = first two path segments for nested files, else the first
+  function getPackageKey(filePath) {
+    const parts = filePath.split('/');
+    // if only one level deep or file is at repo root, use first segment only
+    return parts.length >= 3 ? parts[0] + '/' + parts[1] : parts[0];
+  }
+
+  // Node fill — the package's categorical color
+  function getPackageColor(filePath) {
+    return packageColorScale(getPackageKey(filePath));
+  }
+
+  // Healthy-node stroke — a brighter shade of the package color
+  function getPackageStroke(filePath) {
+    const base = d3.color(getPackageColor(filePath));
+    return base ? base.brighter(0.8).toString() : '#ffffff';
+  }
+
+  // Short package label — last segment of the package key
+  function getPackageLabel(filePath) {
+    const key = getPackageKey(filePath);
+    return key.split('/').pop();
+  }
+
+  // Build the package → color scale from live data; sorted for stable mapping
+  function buildPackageColors() {
+    uniquePackages = [...new Set(
+      state.data.files.map(fgt => getPackageKey(fgt.file_path))
+    )].sort();
+    packageColorScale = d3.scaleOrdinal()
+      .domain(uniquePackages)
+      .range(d3.schemeTableau10);
+  }
+
+  // Stroke encodes health: package-derived when healthy, alert colors otherwise
+  function healthStroke(d) {
+    return d.health === 'green'
+      ? getPackageStroke(d.fgt.file_path)
+      : HEALTH_STROKE[d.health];
+  }
+
+  function healthStrokeWidth(d) {
+    if (d.health === 'amber') return 2;
+    if (d.health === 'red')   return 3;
+    return 1.5;                            // green
+  }
+
+  // Package legend — one row per discovered package, derived from the scale
+  function renderLegend() {
+    const legend = document.createElement('div');
+    legend.id = 'graph-legend';
+    uniquePackages.forEach(pkg => {
+      const item = document.createElement('div');
+      item.className = 'legend-item';
+
+      const swatch = document.createElement('div');
+      swatch.className = 'legend-swatch';
+      swatch.style.background = getPackageColor(pkg + '/x');
+
+      const label = document.createElement('span');
+      label.className = 'legend-label';
+      label.textContent = pkg.split('/').pop();
+
+      item.appendChild(swatch);
+      item.appendChild(label);
+      legend.appendChild(item);
+    });
+    graphPanel.appendChild(legend);
+  }
 
   // Path helpers
   function basename(p) { return p.split('/').pop(); }
@@ -1533,26 +1666,49 @@
     nodeSel = nodeLayer.selectAll('g').data(nodes).join('g')
       .attr('class', 'node-group')
       .call(makeDrag(simulation))
-      .on('mouseover', showTooltip)
+      .on('mouseover', (event, d) => {
+        showTooltip(event, d);
+        updatePackageLabels(getPackageKey(d.fgt.file_path));
+      })
       .on('mousemove', showTooltip)
-      .on('mouseout', hideTooltip)
+      .on('mouseout', (event, d) => {
+        hideTooltip();
+        updatePackageLabels(null);
+      })
       .on('dblclick', function (event, d) {
         event.stopPropagation();        // don't also trigger the background fit
         d.fx = null; d.fy = null;       // release a pinned node
         simulation.alpha(0.3).restart();
       });
 
+    // Circle — fill encodes package, stroke encodes health
     nodeSel.append('circle')
       .attr('class', 'node-circle')
       .attr('r', d => d.radius)
-      .attr('fill',   d => HEALTH_FILL[d.health])
-      .attr('stroke', d => HEALTH_STROKE[d.health])
-      .attr('stroke-width', 1.5);
+      .attr('fill',   d => getPackageColor(d.fgt.file_path))
+      .attr('stroke', d => healthStroke(d))
+      .attr('stroke-width', d => healthStrokeWidth(d));
 
-    nodeSel.append('text')
-      .attr('class', 'node-label')
-      .attr('dy', d => d.radius + 10)
+    // Inline label below the circle — filename text + package-color chip.
+    // foreignObject hosts HTML so the chip can be a styled inline element.
+    const labelBox = nodeSel.append('foreignObject')
+      .attr('class', 'node-fo')
+      .attr('width', 160)
+      .attr('height', 20)
+      .attr('x', -80)
+      .attr('y', d => d.radius + 6)
+      .append('xhtml:div')
+      .attr('class', 'node-label-container');
+
+    labelBox.append('xhtml:span')
+      .attr('class', 'node-filename')
       .text(d => d.label);
+
+    labelBox.append('xhtml:span')
+      .attr('class', 'node-package-chip')
+      .style('background', d => getPackageColor(d.fgt.file_path))
+      .style('color', d => getPackageStroke(d.fgt.file_path))
+      .text(d => getPackageLabel(d.fgt.file_path));
 
     simulation.on('tick', () => {
       linkSel
@@ -1593,6 +1749,8 @@
     resetBtn.addEventListener('click', fitToBounds);
     graphPanel.appendChild(resetBtn);
 
+    renderLegend();
+
     positionMinimap();
     updateLabelVisibility();
     syncStructuralVisibility();
@@ -1614,8 +1772,20 @@
   // Label visibility — hidden when too small, always shown for the selection
   function updateLabelVisibility() {
     if (!graphInited) return;
-    nodeSel.select('.node-label').attr('display', d =>
+    nodeSel.select('.node-fo').attr('display', d =>
       (d.radius >= 8 || d.id === state.selectedPath) ? '' : 'none');
+    updatePackageLabels(null);
+  }
+
+  // Package chips — brightened for the hovered/selected package, dimmed otherwise
+  function updatePackageLabels(hoverKey) {
+    if (!graphInited) return;
+    const selKey = state.selectedPath ? getPackageKey(state.selectedPath) : null;
+    nodeSel.select('.node-package-chip')
+      .style('opacity', d => {
+        const k = getPackageKey(d.fgt.file_path);
+        return (k === hoverKey || k === selKey) ? 1 : 0.85;
+      });
   }
 
   // Recompute radii and reheat when the view mode changes
@@ -1624,7 +1794,7 @@
     radiusScale = buildRadiusScale(state.mode);
     nodes.forEach(n => { n.radius = computeRadius(n.fgt); });
     nodeSel.select('.node-circle').attr('r', d => d.radius);
-    nodeSel.select('.node-label').attr('dy', d => d.radius + 10);
+    nodeSel.select('.node-fo').attr('y', d => d.radius + 6);
     simulation.force('collide', d3.forceCollide(d => d.radius + 4));
     updateLabelVisibility();
     highlightGraph(state.selectedPath);
@@ -1665,8 +1835,8 @@
     if (!graphInited) return;
 
     nodeSel.select('.node-circle')
-      .attr('stroke', d => d.id === path ? GRAPH_MAIZE : HEALTH_STROKE[d.health])
-      .attr('stroke-width', d => d.id === path ? 3 : 1.5);
+      .attr('stroke', d => d.id === path ? GRAPH_MAIZE : healthStroke(d))
+      .attr('stroke-width', d => d.id === path ? 3 : healthStrokeWidth(d));
 
     updateLabelVisibility();
 
@@ -1781,7 +1951,7 @@
       .attr('r', 2)
       .attr('cx', d => mx(d.x))
       .attr('cy', d => my(d.y))
-      .attr('fill', d => HEALTH_STROKE[d.health]);
+      .attr('fill', d => getPackageColor(d.fgt.file_path));
 
     // Viewport rect — the graph area currently visible under the transform
     const tl = currentTransform.invert([0, 0]);
