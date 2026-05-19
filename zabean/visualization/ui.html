@@ -757,32 +757,18 @@
       cursor: grabbing;
     }
 
-    /* Inline node label — filename + package chip, hosted in a foreignObject */
-    .node-fo {
-      overflow: visible;
+    /* Node label — package-color dot + filename text, pure SVG */
+    .node-label {
+      font-family: var(--font-mono);
+      font-size: calc(var(--fs-xs) * var(--font-scale));
+      fill: var(--color-gray-light);
+      text-anchor: start;
       pointer-events: none;
+      user-select: none;
     }
 
-    .node-label-container {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 4px;
-      white-space: nowrap;
-      font-family: var(--font-mono);
-      font-size: 9px;
-      color: var(--color-gray-light);
+    .label-dot {
       pointer-events: none;
-    }
-
-    .node-package-chip {
-      display: inline-block;
-      padding: 1px 4px;
-      border-radius: 3px;
-      font-size: 8px;
-      font-family: var(--font-mono);
-      opacity: 0.85;
-      /* background and color set inline from package color scale */
     }
 
     /* Hover tooltip — absolutely placed inside the top panel body */
@@ -1474,12 +1460,6 @@
     return base ? base.brighter(0.8).toString() : '#ffffff';
   }
 
-  // Short package label — last segment of the package key
-  function getPackageLabel(filePath) {
-    const key = getPackageKey(filePath);
-    return key.split('/').pop();
-  }
-
   // Build the package → color scale from live data; sorted for stable mapping
   function buildPackageColors() {
     uniquePackages = [...new Set(
@@ -1501,6 +1481,35 @@
     if (d.health === 'amber') return 2;
     if (d.health === 'red')   return 3;
     return 1.5;                            // green
+  }
+
+  // Custom force — nudges each node toward the centroid of its package,
+  // producing visible package clusters alongside the standard forces.
+  function forceCluster(strength = 0.12) {
+    let nodes;
+    function force(alpha) {
+      const centroids = {};
+      const counts = {};
+      nodes.forEach(d => {
+        const pkg = getPackageKey(d.fgt.file_path);
+        if (!centroids[pkg]) { centroids[pkg] = { x: 0, y: 0 }; counts[pkg] = 0; }
+        centroids[pkg].x += d.x;
+        centroids[pkg].y += d.y;
+        counts[pkg]++;
+      });
+      Object.keys(centroids).forEach(pkg => {
+        centroids[pkg].x /= counts[pkg];
+        centroids[pkg].y /= counts[pkg];
+      });
+      nodes.forEach(d => {
+        const pkg = getPackageKey(d.fgt.file_path);
+        const c = centroids[pkg];
+        d.vx += (c.x - d.x) * strength * alpha;
+        d.vy += (c.y - d.y) * strength * alpha;
+      });
+    }
+    force.initialize = n => { nodes = n; };
+    return force;
   }
 
   // Package legend — one row per discovered package, derived from the scale
@@ -1627,6 +1636,23 @@
     });
     links = allLinks.slice();
 
+    // Ids of nodes that participate in at least one link. Connected nodes get
+    // a weak pull to center; disconnected nodes get a strong one so they don't
+    // drift off into empty space.
+    const linkedNodeIds = new Set(
+      links.flatMap(l => [l.source.id || l.source, l.target.id || l.target])
+    );
+
+    // Neighbor lookup — node id → set of directly-linked ids, for hover labels
+    const neighbors = new Map();
+    nodes.forEach(n => neighbors.set(n.id, new Set()));
+    links.forEach(l => {
+      const sid = l.source.id || l.source;
+      const tid = l.target.id || l.target;
+      neighbors.get(sid)?.add(tid);
+      neighbors.get(tid)?.add(sid);
+    });
+
     // SVG scaffold
     svg = d3.select(graphPanel).append('svg')
       .attr('id', 'graph-svg')
@@ -1651,10 +1677,19 @@
     const nodeLayer = zoomLayer.append('g').attr('class', 'nodes');
 
     simulation = d3.forceSimulation(nodes)
-      .force('link',    d3.forceLink(links).id(d => d.id).distance(80))
-      .force('charge',  d3.forceManyBody().strength(-200))
+      .force('link',    d3.forceLink(links).id(d => d.id).distance(120))
+      .force('charge',  d3.forceManyBody().strength(-150))
       .force('center',  d3.forceCenter(graphWidth / 2, graphHeight / 2))
-      .force('collide', d3.forceCollide(d => d.radius + 4));
+      .force('collide', d3.forceCollide(d => d.radius + 35))
+      .force('x', d3.forceX(graphWidth / 2)
+        .strength(d => linkedNodeIds.has(d.id) ? 0.02 : 0.2))
+      .force('y', d3.forceY(d => linkedNodeIds.has(d.id) ? graphHeight / 2 : graphHeight * 0.82)
+        .strength(d => linkedNodeIds.has(d.id) ? 0.02 : 0.15))
+      .alphaDecay(0.02)
+      .alphaMin(0.001)
+      .velocityDecay(0.6);
+
+    simulation.force('cluster', forceCluster(0.03));
 
     linkSel = linkLayer.selectAll('line').data(links).join('line')
       .attr('class', 'link')
@@ -1668,12 +1703,15 @@
       .call(makeDrag(simulation))
       .on('mouseover', (event, d) => {
         showTooltip(event, d);
-        updatePackageLabels(getPackageKey(d.fgt.file_path));
+        // Reveal labels for the hovered node, its link neighbors, and selection
+        const nbrs = neighbors.get(d.id) || new Set();
+        nodeSel.select('.node-label-group').style('opacity', n =>
+          (n.id === d.id || nbrs.has(n.id) || n.id === state.selectedPath) ? 1 : 0);
       })
       .on('mousemove', showTooltip)
-      .on('mouseout', (event, d) => {
+      .on('mouseout', () => {
         hideTooltip();
-        updatePackageLabels(null);
+        updateLabelVisibility();
       })
       .on('dblclick', function (event, d) {
         event.stopPropagation();        // don't also trigger the background fit
@@ -1689,26 +1727,21 @@
       .attr('stroke', d => healthStroke(d))
       .attr('stroke-width', d => healthStrokeWidth(d));
 
-    // Inline label below the circle — filename text + package-color chip.
-    // foreignObject hosts HTML so the chip can be a styled inline element.
-    const labelBox = nodeSel.append('foreignObject')
-      .attr('class', 'node-fo')
-      .attr('width', 160)
-      .attr('height', 20)
-      .attr('x', -80)
-      .attr('y', d => d.radius + 6)
-      .append('xhtml:div')
-      .attr('class', 'node-label-container');
+    // Label group below the circle — a package-color dot then filename text
+    const labelGroup = nodeSel.append('g')
+      .attr('class', 'node-label-group')
+      .attr('transform', d => `translate(0, ${d.radius + 10})`);
 
-    labelBox.append('xhtml:span')
-      .attr('class', 'node-filename')
+    labelGroup.append('circle')
+      .attr('class', 'label-dot')
+      .attr('cx', -22).attr('cy', -3.5).attr('r', 4)
+      .attr('fill', d => getPackageColor(d.fgt.file_path))
+      .style('opacity', 0.7);
+
+    labelGroup.append('text')
+      .attr('class', 'node-label')
+      .attr('x', -14).attr('dy', 0)
       .text(d => d.label);
-
-    labelBox.append('xhtml:span')
-      .attr('class', 'node-package-chip')
-      .style('background', d => getPackageColor(d.fgt.file_path))
-      .style('color', d => getPackageStroke(d.fgt.file_path))
-      .text(d => getPackageLabel(d.fgt.file_path));
 
     simulation.on('tick', () => {
       linkSel
@@ -1769,23 +1802,11 @@
     }).observe(graphPanel);
   }
 
-  // Label visibility — hidden when too small, always shown for the selection
+  // Resting label state — every label hidden except the selected node's
   function updateLabelVisibility() {
     if (!graphInited) return;
-    nodeSel.select('.node-fo').attr('display', d =>
-      (d.radius >= 8 || d.id === state.selectedPath) ? '' : 'none');
-    updatePackageLabels(null);
-  }
-
-  // Package chips — brightened for the hovered/selected package, dimmed otherwise
-  function updatePackageLabels(hoverKey) {
-    if (!graphInited) return;
-    const selKey = state.selectedPath ? getPackageKey(state.selectedPath) : null;
-    nodeSel.select('.node-package-chip')
-      .style('opacity', d => {
-        const k = getPackageKey(d.fgt.file_path);
-        return (k === hoverKey || k === selKey) ? 1 : 0.85;
-      });
+    nodeSel.select('.node-label-group').style('opacity', d =>
+      d.id === state.selectedPath ? 1 : 0);
   }
 
   // Recompute radii and reheat when the view mode changes
@@ -1794,8 +1815,9 @@
     radiusScale = buildRadiusScale(state.mode);
     nodes.forEach(n => { n.radius = computeRadius(n.fgt); });
     nodeSel.select('.node-circle').attr('r', d => d.radius);
-    nodeSel.select('.node-fo').attr('y', d => d.radius + 6);
-    simulation.force('collide', d3.forceCollide(d => d.radius + 4));
+    nodeSel.select('.node-label-group')
+      .attr('transform', d => `translate(0, ${d.radius + 10})`);
+    simulation.force('collide', d3.forceCollide(d => d.radius + 35));
     updateLabelVisibility();
     highlightGraph(state.selectedPath);
     simulation.alpha(0.3).restart();
